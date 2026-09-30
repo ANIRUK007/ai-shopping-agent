@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Shopping Agent</title>
+<style>
+  :root { color-scheme: light dark; --line:#8883; }
+  body { font:15px/1.55 system-ui,sans-serif; max-width:820px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { opacity:.6; margin:0 0 20px; }
+  form { display:flex; gap:8px; }
+  input { flex:1; padding:10px 12px; font:inherit; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; }
+  button { padding:10px 16px; font:inherit; cursor:pointer; border:1px solid var(--line); border-radius:6px; background:transparent; color:inherit; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .examples { margin:8px 0 0; font-size:13px; opacity:.7; }
+  .examples a { cursor:pointer; text-decoration:underline; }
+  .card { border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin:10px 0; }
+  .card h3 { margin:0 0 6px; font-size:15px; }
+  .price { font-weight:600; }
+  .over { color:#c0392b; }
+  .specs { font-size:13px; opacity:.85; margin:6px 0; }
+  .rank { font-size:12px; opacity:.6; }
+  details { margin-top:20px; font-size:13px; }
+  pre { overflow:auto; background:#8881; padding:10px; border-radius:6px; }
+  #answer { white-space:pre-wrap; border-left:3px solid var(--line); padding-left:12px; margin:20px 0; }
+  #history li { margin:3px 0; }
+  #history a { cursor:pointer; }
+  .status { margin:16px 0; opacity:.7; }
+</style>
+</head>
+<body>
+<h1>AI Shopping Agent</h1>
+<p class="sub">Gemini plans the research, Tavily searches the web, Python ranks the results.</p>
+
+<form id="f">
+  <input id="q" placeholder="Find the best laptop for AI development under ₹70,000" autocomplete="off" required>
+  <button id="go">Search</button>
+</form>
+<p class="examples">
+  Try:
+  <a data-q="Find the best laptop for AI development under ₹70,000">AI dev laptop under ₹70k</a> ·
+  <a data-q="Best noise cancelling headphones under ₹15,000 in India">ANC headphones under ₹15k</a> ·
+  <a data-q="Best phone for photography under ₹35,000 in India">camera phone under ₹35k</a>
+</p>
+
+<div id="status" class="status"></div>
+<div id="answer"></div>
+<div id="results"></div>
+
+<details id="tracebox" hidden>
+  <summary>Agent tool calls</summary>
+  <pre id="trace"></pre>
+</details>
+
+<h2 style="font-size:16px;margin-top:32px">History</h2>
+<ul id="history"></ul>
+
+<script>
+const $ = s => document.querySelector(s);
+const inr = n => n ? '₹' + Number(n).toLocaleString('en-IN') : 'price not listed';
+
+function render(d) {
+  $('#answer').textContent = d.answer || '';
+  $('#results').innerHTML = (d.products || []).map((p, i) => `
+    <div class="card">
+      <h3>${i + 1}. ${esc(p.name)}</h3>
+      <div class="price ${p.over_budget ? 'over' : ''}">${inr(p.price_inr)}${p.over_budget ? ' — over budget' : ''}</div>
+      <div class="specs">${(p.key_specs || []).map(esc).join(' · ')}</div>
+      <a href="${esc(p.source_url)}" target="_blank" rel="noopener">${esc(p.source_title || p.source_url)}</a>
+      ${p.score !== undefined ? `<div class="rank">match score ${p.score}</div>` : ''}
+    </div>`).join('');
+  $('#trace').textContent = JSON.stringify(d.trace || [], null, 2);
+  $('#tracebox').hidden = !(d.trace || []).length;
+}
+
+const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+
+async function loadHistory() {
+  const rows = await (await fetch('/api/history')).json();
+  $('#history').innerHTML = rows.map(r =>
+    `<li><a data-id="${r.id}">${esc(r.query)}</a> <span class="rank">${new Date(r.created_at * 1000).toLocaleString()}</span></li>`
+  ).join('');
+}
+
+$('#f').onsubmit = async e => {
+  e.preventDefault();
+  $('#go').disabled = true;
+  $('#status').textContent = 'Agent is searching the web… (20-60s)';
+  $('#answer').textContent = ''; $('#results').innerHTML = '';
+  try {
+    const r = await fetch('/api/search', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query: $('#q').value})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'request failed');
+    render(d);
+    $('#status').textContent = '';
+    loadHistory();
+  } catch (err) {
+    $('#status').textContent = 'Error: ' + err.message;
+  } finally {
+    $('#go').disabled = false;
+  }
+};
+
+document.addEventListener('click', async e => {
+  if (e.target.dataset.q) { $('#q').value = e.target.dataset.q; $('#f').requestSubmit(); }
+  if (e.target.dataset.id) {
+    const d = await (await fetch('/api/history/' + e.target.dataset.id)).json();
+    $('#q').value = d.query; render(d); $('#status').textContent = 'Loaded from history.';
+  }
+});
+
+loadHistory();
+</script>
+</body>
+</html>
